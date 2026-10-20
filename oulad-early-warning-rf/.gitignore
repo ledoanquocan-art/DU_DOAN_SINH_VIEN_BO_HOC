@@ -1,6 +1,4 @@
 # Bỏ qua dữ liệu thô và dữ liệu trung gian dung lượng lớn
-data/raw/*.csv
-data/raw/*.zip
 data/processed/*.csv
 data/predictions/*.csv
 
