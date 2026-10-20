@@ -79,7 +79,7 @@ Giải nén toàn bộ 7 file .csv (studentInfo.csv, studentVle.csv, vle.csv,...
 Khởi động hệ thống từ Terminal:
 
 Bash
-python main.py
+streamlit run app.py
 Lần chạy đầu tiên: Bạn phải chọn 1 (Chạy tiền xử lý dữ liệu) để hệ thống đọc file dữ liệu lớn và sinh ra bảng 39 đặc trưng. Mất khoảng 1-2 phút cho bước này.
 
 Tiếp theo: Chọn 2 để huấn luyện các mô hình. Hãy mạnh dạn thay đổi tham số theo lời nhắc trên màn hình. Các cấu hình sẽ được lưu độc lập.
