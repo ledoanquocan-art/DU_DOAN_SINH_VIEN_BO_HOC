@@ -101,8 +101,8 @@ def predict_unlabeled_file_menu():
     print(f"✅ DỰ ĐOÁN HOÀN TẤT BẰNG MÔ HÌNH: {model_label}")
     print("=" * 75)
     print(f"  • Tổng số bản ghi dự đoán           : {n_total:,} dòng")
-    print(f"  • Dự đoán Rút học phần (Withdrawn)  : {n_withdrawn:,} ca ({n_withdrawn/n_total*100:.2f}%)")
-    print(f"  • Dự đoán Không rút (Not_withdrawn) : {n_not_withdrawn:,} ca ({n_not_withdrawn/n_total*100:.2f}%)")
+    print(f"  • Dự đoán bỏ học (Withdrawn)  : {n_withdrawn:,} ca ({n_withdrawn/n_total*100:.2f}%)")
+    print(f"  • Dự đoán Không bỏ học (Not_withdrawn) : {n_not_withdrawn:,} ca ({n_not_withdrawn/n_total*100:.2f}%)")
     if len(df_out) > 0:
         first_row = df_out.iloc[0]
         print(f"  • Minh họa bản ghi đầu tiên         : SV={first_row.get('id_student', 'N/A')} | "

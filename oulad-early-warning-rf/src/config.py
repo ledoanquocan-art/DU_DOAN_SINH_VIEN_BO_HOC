@@ -10,6 +10,12 @@ MODELS_DIR = os.path.join(BASE_DIR, "results", "models")
 METRICS_DIR = os.path.join(BASE_DIR, "results", "metrics")
 FIGURES_DIR = os.path.join(BASE_DIR, "results", "figures")
 
+# Đường dẫn file dữ liệu đã xử lý và tập Train / Test tách biệt
+COHORT_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "cohort_day28.csv")
+FEATURES_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "features_day28.csv")
+TRAIN_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "train_day28.csv")
+TEST_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "test_day28.csv")
+
 # Tự động tạo các thư mục nếu chưa có
 for d in [PROCESSED_DATA_DIR, PREDICTIONS_DIR, MODELS_DIR, METRICS_DIR, FIGURES_DIR]:
     os.makedirs(d, exist_ok=True)
