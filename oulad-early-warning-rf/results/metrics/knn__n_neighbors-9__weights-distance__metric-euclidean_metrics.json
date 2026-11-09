@@ -1,0 +1,26 @@
+{
+    "model_id": "knn__n_neighbors-9__weights-distance__metric-euclidean",
+    "model_key": "knn",
+    "model_name": "k-NN",
+    "model_label": "k-NN [n_neighbors=9, weights=distance, metric=euclidean]",
+    "params": {
+        "n_neighbors": 9,
+        "weights": "distance",
+        "metric": "euclidean"
+    },
+    "cv_accuracy": 80.9,
+    "cv_macro_f1": 49.62,
+    "test_metrics": {
+        "accuracy": 81.37,
+        "macro_f1": 49.92,
+        "precision_w": 41.13,
+        "recall_w": 5.84,
+        "f1_w": 10.23,
+        "tn": 4389,
+        "fp": 83,
+        "fn": 935,
+        "tp": 58,
+        "ap_withdrawn": 0.2513,
+        "roc_auc": 0.5858
+    }
+}
