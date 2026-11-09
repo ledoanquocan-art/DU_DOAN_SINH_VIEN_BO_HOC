@@ -6,12 +6,26 @@ import subprocess
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold, cross_validate
+from sklearn.base import clone
+from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from src import config
+
+
+def print_progress_bar(percent, status_text="", bar_length=32):
+    """Hiển thị thanh tiến trình % trực tiếp trên Terminal."""
+    percent = max(0, min(100, int(percent)))
+    filled_length = int(round(bar_length * percent / 100.0))
+    bar = "█" * filled_length + "░" * (bar_length - filled_length)
+    sys.stdout.write(f"\r  ⏳ [{bar}] {percent:>3}% | {status_text:<48}")
+    sys.stdout.flush()
+    if percent >= 100:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 def get_user_param(param_name, default_value, param_type, valid_options=None, description=""):
@@ -43,10 +57,7 @@ def get_user_param(param_name, default_value, param_type, valid_options=None, de
 
 
 def format_model_identity(model_key, model_name, params):
-    """
-    Tạo tên hiển thị và mã file duy nhất dựa trên loại mô hình + toàn bộ tham số.
-    Đảm bảo 2 mô hình cùng loại nhưng khác tham số sẽ có 2 model_id khác nhau.
-    """
+    """Tạo tên hiển thị và mã file duy nhất dựa trên loại mô hình + tham số."""
     param_str = ", ".join([f"{k}={v}" for k, v in params.items()])
     model_label = f"{model_name} [{param_str}]"
 
@@ -58,9 +69,12 @@ def format_model_identity(model_key, model_name, params):
     return model_id, model_label
 
 
-def load_and_split_data():
-    """Đọc features_day28.csv và chia Train/Test + 5-Fold CV cố định theo id_student."""
-    feat_path = os.path.join(config.PROCESSED_DATA_DIR, "features_day28.csv")
+def load_and_split_data(save_split_files=True):
+    """
+    Đọc features_day28.csv, chia Train (80%) / Test (20%) theo id_student,
+    lưu thành 2 file train_day28.csv và test_day28.csv và trả về dữ liệu.
+    """
+    feat_path = config.FEATURES_DATA_PATH
     if not os.path.exists(feat_path):
         raise FileNotFoundError(
             "Chưa có file features_day28.csv! Vui lòng chạy [Mục 1. Chạy tiền xử lý dữ liệu] trước."
@@ -74,6 +88,11 @@ def load_and_split_data():
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=config.SEED)
     train_idx, test_idx = next(gss.split(X, y, groups))
     assert set(groups.iloc[train_idx]).isdisjoint(set(groups.iloc[test_idx])), "Rò rỉ id_student!"
+
+    # Xuất trực tiếp 2 file train_day28.csv và test_day28.csv ra ổ cứng nếu chưa có hoặc được yêu cầu
+    if save_split_files or not (os.path.exists(config.TRAIN_DATA_PATH) and os.path.exists(config.TEST_DATA_PATH)):
+        df.iloc[train_idx].to_csv(config.TRAIN_DATA_PATH, index=False)
+        df.iloc[test_idx].to_csv(config.TEST_DATA_PATH, index=False)
 
     X_train, y_train, groups_train = X.iloc[train_idx], y.iloc[train_idx], groups.iloc[train_idx]
     X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
@@ -103,29 +122,57 @@ def build_preprocessor(scale_numerical=False):
     ])
 
 
-def train_and_save_model(model_key, model_name, estimator, params, scale_numerical=False):
+def train_and_save_model(model_key, model_name, estimator, params, scale_numerical=False, progress_callback=None):
     """
-    Huấn luyện mô hình với tham số vừa nhập, đánh giá 5-Fold CV và lưu thành file riêng theo tham số.
+    Huấn luyện mô hình có thanh tiến trình % theo từng bước (Fold 1..5 + Fit tổng),
+    lưu model độc lập và in rõ đường dẫn tập Train / tập Test.
     """
-    _, X_train, y_train, _, _, cv, _ = load_and_split_data()
+    def update_prog(pct, msg):
+        print_progress_bar(pct, msg)
+        if progress_callback:
+            progress_callback(pct, msg)
+
+    print(f"\n🚀 Bắt đầu tiến trình huấn luyện: {model_name}")
+    update_prog(5, "Đang nạp và tách tập dữ liệu Train / Test...")
+    _, X_train, y_train, X_test, _, cv, _ = load_and_split_data(save_split_files=True)
 
     model_id, model_label = format_model_identity(model_key, model_name, params)
-    pipe = Pipeline([
+    base_pipe = Pipeline([
         ("preprocess", build_preprocessor(scale_numerical=scale_numerical)),
         ("model", estimator)
     ])
 
-    print(f"\n⏳ Đang huấn luyện & đánh giá 5-Fold CV cho: {model_label} ...")
-    cv_res = cross_validate(
-        pipe, X_train, y_train, cv=cv,
-        scoring={"acc": "accuracy", "f1_macro": "f1_macro"},
-        n_jobs=2
-    )
-    pipe.fit(X_train, y_train)
+    fold_accs = []
+    fold_f1s = []
+    n_folds = len(cv)
 
-    cv_acc_mean = round(float(np.mean(cv_res["test_acc"])) * 100, 2)
-    cv_f1_mean = round(float(np.mean(cv_res["test_f1_macro"])) * 100, 2)
-    cv_f1_std = round(float(np.std(cv_res["test_f1_macro"])) * 100, 2)
+    # Chạy từng Fold để cập nhật % tiến trình theo thời gian thực
+    for idx, (f_train_idx, f_val_idx) in enumerate(cv, 1):
+        start_pct = 10 + int((idx - 1) * (70 / n_folds))
+        update_prog(start_pct, f"Đang huấn luyện Cross-Validation Fold {idx}/{n_folds}...")
+
+        fold_pipe = clone(base_pipe)
+        X_tr_fold, y_tr_fold = X_train.iloc[f_train_idx], y_train.iloc[f_train_idx]
+        X_va_fold, y_va_fold = X_train.iloc[f_val_idx], y_train.iloc[f_val_idx]
+
+        fold_pipe.fit(X_tr_fold, y_tr_fold)
+        y_va_pred = fold_pipe.predict(X_va_fold)
+
+        fold_accs.append(accuracy_score(y_va_fold, y_va_pred))
+        fold_f1s.append(f1_score(y_va_fold, y_va_pred, average="macro"))
+
+        end_pct = 10 + int(idx * (70 / n_folds))
+        update_prog(end_pct, f"Hoàn tất Fold {idx}/{n_folds} (Macro-F1: {fold_f1s[-1]*100:.2f}%)")
+
+    # Bước huấn luyện mô hình tổng trên toàn bộ tập Train (80% -> 95%)
+    update_prog(85, "Đang khớp mô hình trên toàn bộ 21.956 mẫu Train...")
+    base_pipe.fit(X_train, y_train)
+
+    # Bước lưu file .joblib (95% -> 100%)
+    update_prog(95, "Đang đóng gói và lưu file mô hình (.joblib)...")
+    cv_acc_mean = round(float(np.mean(fold_accs)) * 100, 2)
+    cv_f1_mean = round(float(np.mean(fold_f1s)) * 100, 2)
+    cv_f1_std = round(float(np.std(fold_f1s)) * 100, 2)
 
     os.makedirs(config.MODELS_DIR, exist_ok=True)
     model_filename = f"{model_id}.joblib"
@@ -137,21 +184,27 @@ def train_and_save_model(model_key, model_name, estimator, params, scale_numeric
         "model_name": model_name,
         "model_label": model_label,
         "params": params,
-        "pipeline": pipe,
+        "pipeline": base_pipe,
         "cv_accuracy": cv_acc_mean,
         "cv_macro_f1": cv_f1_mean,
         "cv_macro_f1_std": cv_f1_std,
         "test_metrics": None,
+        "train_data_path": config.TRAIN_DATA_PATH,
+        "test_data_path": config.TEST_DATA_PATH,
         "trained_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     joblib.dump(artifact, model_path)
+    update_prog(100, "Hoàn tất 100% quá trình huấn luyện và lưu trữ!")
 
-    print("=" * 65)
+    print("=" * 78)
     print(f"✅ ĐÃ HUẤN LUYỆN VÀ LƯU MÔ HÌNH THÀNH CÔNG!")
+    print("-" * 78)
     print(f"  • Tên mô hình & tham số : {model_label}")
     print(f"  • Kết quả 5-Fold CV     : Accuracy = {cv_acc_mean}% | Macro-F1 = {cv_f1_mean}% ± {cv_f1_std}%")
-    print(f"  • File lưu độc lập      : results/models/{model_filename}")
-    print("=" * 65)
+    print(f"  • Tập dữ liệu Train     : {config.TRAIN_DATA_PATH} ({len(X_train):,} dòng - 80%)")
+    print(f"  • Tập dữ liệu Test      : {config.TEST_DATA_PATH} ({len(X_test):,} dòng - 20%)")
+    print(f"  • File mô hình đã lưu   : {model_path}")
+    print("=" * 78)
     return artifact
 
 

@@ -1,13 +1,17 @@
 import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+from src import config
 from src.cohort_builder import build_cohort
 from src.student_lookup import search_student_menu
 
 
 def train_submenu():
     while True:
-        print("\n" + "-" * 55)
-        print("🛠️  2. HUẤN LUYỆN MÔ HÌNH (NHẬP THAM SỐ & LƯU MODEL RIÊNG)")
-        print("-" * 55)
+        print("\n" + "-" * 58)
+        print("🛠️  2. HUẤN LUYỆN MÔ HÌNH (NHẬP THAM SỐ & HIỂN THỊ % TIẾN TRÌNH)")
+        print("-" * 58)
         print("   1. Random Forest")
         print("   2. k-NN")
         print("   3. SVM")
@@ -40,29 +44,39 @@ def train_submenu():
 
 def main():
     while True:
-        print("\n" + "=" * 68)
-        print("🎓 HỆ THỐNG CẢNH BÁO NGUY CƠ RÚT HỌC PHẦN OULAD - NHÓM 1 CMC")
-        print("=" * 68)
-        print("  1. Chạy tiền xử lý dữ liệu")
-        print("  2. Huấn luyện mô hình")
+        print("\n" + "=" * 72)
+        print("🎓 HỆ THỐNG CẢNH BÁO NGUY CƠ BỎ HỌC DỰA TRÊN DỮ LIỆU VLE (OU-LAD)")
+        print("=" * 72)
+        print("  1. Chạy tiền xử lý dữ liệu (Lọc Cohort, Tạo 39 đặc trưng & Chia Train/Test)")
+        print("  2. Huấn luyện mô hình (Có thanh % tiến trình & báo đường dẫn Train/Test)")
         print("       1. Random Forest | 2. k-NN | 3. SVM | 4. Bayes")
-        print("  3. Chạy mô hình (Chọn mô hình đã train -> Xuất kết quả, biểu đồ & lưu)")
+        print("  3. Chạy mô hình (Có thanh % tiến trình -> Xuất kết quả, biểu đồ & lưu)")
         print("  4. Đối chứng (Chọn >= 2 mô hình đã chạy -> Xuất báo cáo so sánh)")
         print("  5. Dự đoán (Nhập file không nhãn -> Chọn mô hình -> Xuất & mở file)")
         print("  6. Tìm SV (Nhập mã SV -> Trả ra bộ 39 thuộc tính của SV đó)")
         print("  0. Thoát")
-        print("=" * 68)
+        print("=" * 72)
 
         choice = input("👉 Nhập lựa chọn của bạn (0-6): ").strip()
 
         try:
             if choice == "1":
-                print("\n⏳ [Bước 1/2] Đang lọc nhóm dự báo hợp lệ tại ngày 28...")
+                print("\n⏳ [Bước 1/3] Đang lọc nhóm dự báo hợp lệ tại ngày 28...")
                 build_cohort()
-                print("⏳ [Bước 2/2] Đang tổng hợp 39 đặc trưng VLE (ngày 0-28)...")
+                print("\n⏳ [Bước 2/3] Đang tổng hợp 39 đặc trưng VLE (ngày 0-28)...")
                 from src.feature_engineering import generate_features
                 generate_features()
-                print("✅ Hoàn thành tiền xử lý dữ liệu!")
+                print("\n⏳ [Bước 3/3] Đang chia tập dữ liệu Train (80%) và Test (20%) theo id_student...")
+                from src.pipeline_utils import load_and_split_data
+                _, X_train, _, X_test, _, _, _ = load_and_split_data(save_split_files=True)
+                print("=" * 72)
+                print("📂 VỊ TRÍ LƯU CÁC TẬP DỮ LIỆU SAU TIỀN XỬ LÝ:")
+                print(f"  • Tập Cohort (27.421 dòng) : {config.COHORT_DATA_PATH}")
+                print(f"  • Bảng 39 đặc trưng        : {config.FEATURES_DATA_PATH}")
+                print(f"  • Tập dữ liệu TRAIN (80%)  : {config.TRAIN_DATA_PATH} ({len(X_train):,} dòng)")
+                print(f"  • Tập dữ liệu TEST  (20%)  : {config.TEST_DATA_PATH} ({len(X_test):,} dòng)")
+                print("=" * 72)
+                print("✅ Hoàn thành toàn bộ tiền xử lý dữ liệu!")
             elif choice == "2":
                 train_submenu()
             elif choice == "3":

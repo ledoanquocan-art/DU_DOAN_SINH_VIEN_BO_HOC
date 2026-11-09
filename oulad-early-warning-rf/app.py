@@ -1,7 +1,6 @@
 import os
 import glob
 import json
-import joblib
 import warnings
 import numpy as np
 import pandas as pd
@@ -12,11 +11,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.naive_bayes import GaussianNB
-from sklearn.metrics import (
-    accuracy_score, f1_score, precision_score, recall_score,
-    confusion_matrix, average_precision_score, roc_auc_score
-)
-from sklearn.inspection import permutation_importance
 
 from src import config
 from src.cohort_builder import build_cohort
@@ -27,7 +21,7 @@ from src.pipeline_utils import (
     list_saved_models,
     open_file_on_os
 )
-from src.evaluator import plot_confusion_matrix
+from src.evaluator import evaluate_model_with_progress
 from src.predictor import create_sample_unlabeled_file
 
 warnings.filterwarnings("ignore")
@@ -36,7 +30,7 @@ warnings.filterwarnings("ignore")
 # CẤU HÌNH TRANG WEB & CSS GIAO DIỆN
 # =====================================================================
 st.set_page_config(
-    page_title="OULAD Early Warning System - Nhóm 1 CMC",
+    page_title="OULAD Early Warning System",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -61,25 +55,26 @@ st.markdown("""
         margin: 0.3rem 0 0 0;
         font-size: 0.95rem;
     }
-    .metric-box {
-        background-color: #f8f9fa;
-        border-left: 5px solid #3b6978;
-        padding: 12px 16px;
-        border-radius: 8px;
-        margin-bottom: 10px;
+    .path-box {
+        background-color: #f1f5f9;
+        border-left: 4px solid #0f766e;
+        padding: 10px 14px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        margin-bottom: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="main-header">
-    <h1>🎓 HỆ THỐNG CẢNH BÁO SỚM NGUY CƠ RÚT HỌC PHẦN (OULAD)</h1>
-    <p>Dự báo tại thời điểm cuối ngày 28 (39 đặc trưng VLE & Nhân khẩu học) — Nhóm 1 Trường Đại học CMC</p>
+    <h1>🎓 HỆ THỐNG CẢNH BÁO SỚM NGUY CƠ BỎ HỌC</h1>
+    <p>Dự báo tại thời điểm cuối ngày 28 (39 đặc trưng VLE & Nhân khẩu học)</p>
 </div>
 """, unsafe_allow_html=True)
 
 # =====================================================================
-# SIDEBAR MENU ĐIỀU HƯỚNG (6 CHỨC NĂNG CHUẨN)
+# SIDEBAR MENU ĐIỀU HƯỚNG & TRẠNG THÁI TẬP TRAIN / TEST
 # =====================================================================
 with st.sidebar:
     st.markdown("### 🧭 DANH MỤC CHỨC NĂNG")
@@ -96,56 +91,71 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    cohort_ready = os.path.exists(os.path.join(config.PROCESSED_DATA_DIR, "cohort_day28.csv"))
-    feat_ready = os.path.exists(os.path.join(config.PROCESSED_DATA_DIR, "features_day28.csv"))
+    cohort_ready = os.path.exists(config.COHORT_DATA_PATH)
+    feat_ready = os.path.exists(config.FEATURES_DATA_PATH)
+    train_ready = os.path.exists(config.TRAIN_DATA_PATH)
+    test_ready = os.path.exists(config.TEST_DATA_PATH)
     saved_models = list_saved_models()
     eval_files = glob.glob(os.path.join(config.METRICS_DIR, "*_metrics.json"))
 
     st.markdown("### 📌 TRẠNG THÁI HỆ THỐNG")
     st.write(f"• Cohort ngày 28: {'✅ Sẵn sàng' if cohort_ready else '❌ Chưa tạo'}")
     st.write(f"• Bảng 39 đặc trưng: {'✅ Sẵn sàng' if feat_ready else '❌ Chưa tạo'}")
+    st.write(f"• Tập Train (80%): {'✅ Đã tách' if train_ready else '❌ Chưa tách'}")
+    st.write(f"• Tập Test (20%): {'✅ Đã tách' if test_ready else '❌ Chưa tách'}")
     st.write(f"• Mô hình đã train: **{len(saved_models)}** cấu hình")
     st.write(f"• Mô hình đã chạy Test: **{len(eval_files)}** cấu hình")
 
-    st.markdown("---")
-    st.caption("**Nhóm 1 - CMC University**\n"
-               "- Lê Doãn Quốc An (Leader)\n"
-               "- Trịnh Phan Tuấn Anh\n"
-               "- Nông Đức Mạnh\n"
-               "- Trần Ngọc Tuấn\n"
-               "- Nguyễn Anh Đức")
+    if train_ready and test_ready:
+        with st.expander("📂 Xem đường dẫn Train / Test"):
+            st.caption("**Tập Train (21.956 dòng):**")
+            st.code(config.TRAIN_DATA_PATH, language="text")
+            st.caption("**Tập Test (5.465 dòng):**")
+            st.code(config.TEST_DATA_PATH, language="text")
 
+    st.markdown("---")
 
 # =====================================================================
-# CHỨC NĂNG 1: TIỀN XỬ LÝ DỮ LIỆU
+# CHỨC NĂNG 1: TIỀN XỬ LÝ DỮ LIỆU & CHIA TRAIN / TEST (CÓ THANH %)
 # =====================================================================
 if menu == "1. Chạy tiền xử lý dữ liệu":
-    st.subheader("🛠️ 1. Khảo sát OULAD, Lọc nhóm dự báo ngày 28 & Trích xuất 39 đặc trưng")
+    st.subheader("🛠️ 1. Khảo sát OULAD, Lọc nhóm dự báo ngày 28, Trích xuất 39 đặc trưng & Chia Train/Test")
     st.write(
-        "Quy trình tự động kiểm tra 7 bảng gốc trong `data/raw/`, lọc tuần tự 4 bước để thu về "
-        "**27.421 lượt đăng ký hợp lệ** tại cuối ngày 28 và tổng hợp hành vi tương tác VLE từ ngày 0 đến ngày 28."
+        "Quy trình tự động kiểm tra 7 bảng gốc trong `data/raw/`, lọc 4 bước thu về **27.421 lượt đăng ký hợp lệ**, "
+        "tổng hợp 39 đặc trưng VLE và tách sẵn **Tập Train (80%) / Tập Test (20%)** theo `id_student`."
     )
 
-    col_btn1, col_btn2 = st.columns([1, 2])
+    col_btn1, _ = st.columns([1, 2])
     with col_btn1:
         run_prep = st.button("🚀 Bắt đầu chạy Tiền xử lý dữ liệu", type="primary", use_container_width=True)
 
     if run_prep:
+        prog_bar = st.progress(0, text="⏳ [0%] Đang khởi tạo quy trình tiền xử lý dữ liệu...")
         try:
-            with st.spinner("⏳ [Bước 1/2] Đang lọc nhóm dự báo hợp lệ tại ngày 28 (build_cohort)..."):
-                cohort_df = build_cohort()
-            st.success(f"✔ Đã lưu `cohort_day28.csv` ({len(cohort_df):,} dòng).")
+            prog_bar.progress(10, text="⏳ [10%] Bước 1/3: Đang lọc nhóm dự báo hợp lệ tại ngày 28 (build_cohort)...")
+            cohort_df = build_cohort()
+            prog_bar.progress(40, text=f"⏳ [40%] Đã tạo cohort_day28.csv ({len(cohort_df):,} dòng). Đang đọc studentVle.csv...")
 
-            with st.spinner("⏳ [Bước 2/2] Đang đọc studentVle.csv và trích xuất 39 đặc trưng (generate_features)..."):
-                feat_df = generate_features()
-            st.success(f"✔ Hoàn tất! Đã tạo `features_day28.csv` ({len(feat_df):,} dòng x {len(config.ALL_FEATURES)} đặc trưng).")
-            st.rerun()
+            feat_df = generate_features()
+            prog_bar.progress(80, text=f"⏳ [80%] Đã trích xuất 39 đặc trưng ({len(feat_df):,} dòng). Đang tách tập Train/Test...")
+
+            _, X_train, _, X_test, _, _, _ = load_and_split_data(save_split_files=True)
+            prog_bar.progress(100, text="✅ [100%] Hoàn tất toàn bộ tiền xử lý và phân chia tập dữ liệu Train/Test!")
+
+            st.success(
+                f"✔ Hoàn tất 100%! Đã xuất đủ bộ dữ liệu chuẩn:\n"
+                f"- **Tập Train (80% - {len(X_train):,} dòng):** `{config.TRAIN_DATA_PATH}`\n"
+                f"- **Tập Test (20% - {len(X_test):,} dòng):** `{config.TEST_DATA_PATH}`"
+            )
         except Exception as e:
             st.error(f"❌ Lỗi khi chạy tiền xử lý: {e}")
 
-    feat_path = os.path.join(config.PROCESSED_DATA_DIR, "features_day28.csv")
-    if os.path.exists(feat_path):
-        df_feat = pd.read_csv(feat_path)
+    if os.path.exists(config.FEATURES_DATA_PATH):
+        # Đảm bảo file train_day28.csv và test_day28.csv đã được sinh ra nếu có sẵn features_day28.csv
+        if not (os.path.exists(config.TRAIN_DATA_PATH) and os.path.exists(config.TEST_DATA_PATH)):
+            load_and_split_data(save_split_files=True)
+
+        df_feat = pd.read_csv(config.FEATURES_DATA_PATH)
         n_total = len(df_feat)
         n_w = int((df_feat[config.TARGET_COL] == "Withdrawn").sum())
         n_nw = int((df_feat[config.TARGET_COL] == "Not_withdrawn").sum())
@@ -153,9 +163,18 @@ if menu == "1. Chạy tiền xử lý dữ liệu":
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Tổng lượt đăng ký hợp lệ", f"{n_total:,}", f"{n_stu:,} sinh viên")
-        m2.metric("Không rút (Not_withdrawn)", f"{n_nw:,}", f"{n_nw/n_total*100:.2f}%")
-        m3.metric("Rút học phần (Withdrawn)", f"{n_w:,}", f"{n_w/n_total*100:.2f}%")
-        m4.metric("Số đặc trưng đầu vào", f"{len(config.ALL_FEATURES)} cột", "7 phân loại + 32 biến số")
+        m2.metric("Không bỏ học (Not_withdrawn)", f"{n_nw:,}", f"{n_nw/n_total*100:.2f}%")
+        m3.metric("Bỏ học (Withdrawn)", f"{n_w:,}", f"{n_w/n_total*100:.2f}%")
+        m4.metric("Tỷ lệ Chia Train / Test", "21.956 / 5.465", "80% Train - 20% Test")
+
+        st.markdown(f"""
+        <div class="path-box">
+            <b>📂 VỊ TRÍ LƯU TẬP DỮ LIỆU TRÊN MÁY TÍNH:</b><br>
+            • <b>Bảng 39 đặc trưng đầy đủ (27.421 dòng):</b> <code>{config.FEATURES_DATA_PATH}</code><br>
+            • <b>Tập dữ liệu TRAIN (80% = 21.956 dòng):</b> <code>{config.TRAIN_DATA_PATH}</code><br>
+            • <b>Tập dữ liệu TEST (20% = 5.465 dòng):</b> <code>{config.TEST_DATA_PATH}</code>
+        </div>
+        """, unsafe_allow_html=True)
 
         c_left, c_right = st.columns([1, 1.4])
         with c_left:
@@ -163,20 +182,35 @@ if menu == "1. Chạy tiền xử lý dữ liệu":
             if os.path.exists(fig_dist):
                 st.image(fig_dist, caption="Hình 3.1: Phân phối nhãn trên 27.421 lượt đăng ký", use_container_width=True)
         with c_right:
-            st.markdown("**Xem trước 10 dòng đầu của bảng `features_day28.csv`:**")
-            st.dataframe(df_feat.head(10), use_container_width=True, height=300)
+            tab_all, tab_tr, tab_te = st.tabs([
+                "📋 Full 39 Đặc trưng (27.421 dòng)",
+                "🟢 Tập Train (21.956 dòng)",
+                "🔵 Tập Test (5.465 dòng)"
+            ])
+            with tab_all:
+                st.dataframe(df_feat.head(10), use_container_width=True, height=280)
+            with tab_tr:
+                if os.path.exists(config.TRAIN_DATA_PATH):
+                    df_tr = pd.read_csv(config.TRAIN_DATA_PATH, nrows=10)
+                    st.caption(f"Đường dẫn: `{config.TRAIN_DATA_PATH}`")
+                    st.dataframe(df_tr, use_container_width=True, height=250)
+            with tab_te:
+                if os.path.exists(config.TEST_DATA_PATH):
+                    df_te = pd.read_csv(config.TEST_DATA_PATH, nrows=10)
+                    st.caption(f"Đường dẫn: `{config.TEST_DATA_PATH}`")
+                    st.dataframe(df_te, use_container_width=True, height=250)
     else:
         st.info("💡 Chưa có dữ liệu đã xử lý. Hãy bấm nút **Bắt đầu chạy Tiền xử lý dữ liệu** ở trên.")
 
 
 # =====================================================================
-# CHỨC NĂNG 2: HUẤN LUYỆN MÔ HÌNH (NHẬP TỪNG THAM SỐ & LƯU MODEL ĐỘC LẬP)
+# CHỨC NĂNG 2: HUẤN LUYỆN MÔ HÌNH (CÓ THANH % TIẾN TRÌNH & BÁO VỊ TRÍ TRAIN/TEST)
 # =====================================================================
 elif menu == "2. Huấn luyện mô hình":
-    st.subheader("⚙️ 2. Huấn luyện Mô hình với Tham số Tùy chỉnh")
+    st.subheader("⚙️ 2. Huấn luyện Mô hình với 5-Fold CV & Lưu file `.joblib`")
     st.write(
-        "Mỗi bộ tham số bạn chọn sẽ được huấn luyện trên tập Train, đánh giá chéo **5-Fold StratifiedGroupKFold** "
-        "và lưu thành **một mô hình độc lập** kèm tên tham số trong `results/models/`."
+        "Mỗi bộ tham số sẽ được đánh giá qua từng Fold của **5-Fold StratifiedGroupKFold** (cập nhật thanh `%` trực tiếp) "
+        "và lưu thành một file `.joblib` độc lập."
     )
 
     if not feat_ready:
@@ -232,49 +266,71 @@ elif menu == "2. Huấn luyện mô hình":
             submit_train = st.form_submit_button("🚀 Huấn luyện & Lưu mô hình với bộ tham số này", type="primary")
 
         if submit_train:
+            # Khởi tạo thanh tiến trình % ngay trên giao diện Streamlit
+            train_prog_bar = st.progress(0, text="⏳ [0%] Đang chuẩn bị huấn luyện mô hình...")
+            status_text = st.empty()
+
+            def update_train_ui(pct, msg):
+                pct_int = max(0, min(100, int(pct)))
+                train_prog_bar.progress(pct_int, text=f"⏳ Tiến độ huấn luyện: {pct_int}% — {msg}")
+                status_text.caption(f"🔄 Trạng thái hiện tại: **{msg}** (`{pct_int}%`)")
+
             try:
-                with st.spinner("⏳ Đang chạy 5-Fold Cross-Validation và huấn luyện mô hình..."):
-                    if algo.startswith("1."):
-                        m_depth = None if max_depth_opt.startswith("None") else int(max_depth_val)
-                        c_weight = None if class_weight_opt == "None" else class_weight_opt
-                        params = {
-                            "n_estimators": int(n_estimators),
-                            "max_depth": m_depth,
-                            "min_samples_leaf": int(min_samples_leaf),
-                            "class_weight": c_weight
-                        }
-                        est = RandomForestClassifier(
-                            criterion="gini", max_features="sqrt", bootstrap=True,
-                            random_state=config.SEED, n_jobs=1, **params
-                        )
-                        artifact = train_and_save_model("rf", "Random Forest", est, params, scale_numerical=False)
+                if algo.startswith("1."):
+                    m_depth = None if max_depth_opt.startswith("None") else int(max_depth_val)
+                    c_weight = None if class_weight_opt == "None" else class_weight_opt
+                    params = {
+                        "n_estimators": int(n_estimators),
+                        "max_depth": m_depth,
+                        "min_samples_leaf": int(min_samples_leaf),
+                        "class_weight": c_weight
+                    }
+                    est = RandomForestClassifier(
+                        criterion="gini", max_features="sqrt", bootstrap=True,
+                        random_state=config.SEED, n_jobs=1, **params
+                    )
+                    artifact = train_and_save_model(
+                        "rf", "Random Forest", est, params,
+                        scale_numerical=False, progress_callback=update_train_ui
+                    )
 
-                    elif algo.startswith("2."):
-                        params = {"n_neighbors": int(n_neighbors), "weights": weights, "p": int(p_metric)}
-                        est = KNeighborsClassifier(**params)
-                        artifact = train_and_save_model("knn", "k-NN", est, params, scale_numerical=True)
+                elif algo.startswith("2."):
+                    params = {"n_neighbors": int(n_neighbors), "weights": weights, "p": int(p_metric)}
+                    est = KNeighborsClassifier(**params)
+                    artifact = train_and_save_model(
+                        "knn", "k-NN", est, params,
+                        scale_numerical=True, progress_callback=update_train_ui
+                    )
 
-                    elif algo.startswith("3."):
-                        c_weight = None if svm_cw == "None" else svm_cw
-                        params = {"C": float(c_val), "class_weight": c_weight, "kernel": kernel}
-                        est = SVC(gamma="scale", probability=False, random_state=config.SEED, **params)
-                        artifact = train_and_save_model("svm", "SVM", est, params, scale_numerical=True)
+                elif algo.startswith("3."):
+                    c_weight = None if svm_cw == "None" else svm_cw
+                    params = {"C": float(c_val), "class_weight": c_weight, "kernel": kernel}
+                    est = SVC(gamma="scale", probability=False, random_state=config.SEED, **params)
+                    artifact = train_and_save_model(
+                        "svm", "SVM", est, params,
+                        scale_numerical=True, progress_callback=update_train_ui
+                    )
 
-                    elif algo.startswith("4."):
-                        params = {"var_smoothing": float(var_smoothing)}
-                        est = GaussianNB(priors=None, **params)
-                        artifact = train_and_save_model("nb", "GaussianNB", est, params, scale_numerical=True)
+                elif algo.startswith("4."):
+                    params = {"var_smoothing": float(var_smoothing)}
+                    est = GaussianNB(priors=None, **params)
+                    artifact = train_and_save_model(
+                        "nb", "GaussianNB", est, params,
+                        scale_numerical=True, progress_callback=update_train_ui
+                    )
 
+                status_text.empty()
                 st.success(
-                    f"✅ Đã huấn luyện & lưu thành công: **{artifact['model_label']}**\n\n"
-                    f"• **CV Accuracy**: `{artifact['cv_accuracy']}%` | "
-                    f"**CV Macro-F1**: `{artifact['cv_macro_f1']}% ± {artifact['cv_macro_f1_std']}%`\n\n"
-                    f"• **File lưu**: `results/models/{artifact['model_id']}.joblib`"
+                    f"✅ **Hoàn tất 100%!** Đã huấn luyện & lưu mô hình: **{artifact['model_label']}**\n\n"
+                    f"• **Kết quả 5-Fold CV:** Accuracy = `{artifact['cv_accuracy']}%` | "
+                    f"Macro-F1 = `{artifact['cv_macro_f1']}% ± {artifact['cv_macro_f1_std']}%`\n\n"
+                    f"• **Tập dữ liệu Train (80% - 21.956 dòng):** `{config.TRAIN_DATA_PATH}`\n\n"
+                    f"• **Tập dữ liệu Test (20% - 5.465 dòng):** `{config.TEST_DATA_PATH}`\n\n"
+                    f"• **File mô hình đã lưu:** `{os.path.join(config.MODELS_DIR, artifact['model_id'] + '.joblib')}`"
                 )
             except Exception as e:
                 st.error(f"❌ Lỗi khi huấn luyện: {e}")
 
-        # Hiển thị danh sách các mô hình đã lưu
         models_now = list_saved_models()
         if models_now:
             st.markdown("---")
@@ -293,7 +349,7 @@ elif menu == "2. Huấn luyện mô hình":
 
 
 # =====================================================================
-# CHỨC NĂNG 3: CHẠY MÔ HÌNH (XUẤT KẾT QUẢ, BIỂU ĐỒ & LƯU FILE)
+# CHỨC NĂNG 3: CHẠY MÔ HÌNH (CÓ THANH % TIẾN TRÌNH & BÁO VỊ TRÍ TEST)
 # =====================================================================
 elif menu == "3. Chạy mô hình (Kiểm thử & Biểu đồ)":
     st.subheader("🚀 3. Chạy Kiểm thử Mô hình trên Tập Test (5.465 mẫu)")
@@ -310,85 +366,40 @@ elif menu == "3. Chạy mô hình (Kiểm thử & Biểu đồ)":
         selected = model_options[chosen_label]
 
         if st.button("▶️ Chạy Mô hình này & Xuất biểu đồ", type="primary"):
-            with st.spinner(f"⏳ Đang chạy kiểm thử {selected['model_label']} trên tập Test..."):
-                pipe = selected["pipeline"]
-                model_id = selected["model_id"]
-                model_label = selected["model_label"]
+            eval_prog_bar = st.progress(0, text="⏳ [0%] Đang khởi tạo tiến trình chạy kiểm thử...")
+            eval_status = st.empty()
 
-                _, _, _, X_test, y_test, _, _ = load_and_split_data()
-                y_pred = pipe.predict(X_test)
+            def update_eval_ui(pct, msg):
+                pct_int = max(0, min(100, int(pct)))
+                eval_prog_bar.progress(pct_int, text=f"⏳ Tiến độ chạy kiểm thử: {pct_int}% — {msg}")
+                eval_status.caption(f"🔄 Đang thực hiện: **{msg}** (`{pct_int}%`)")
 
-                tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=["Not_withdrawn", "Withdrawn"]).ravel()
-                metrics = {
-                    "accuracy": round(float(accuracy_score(y_test, y_pred)) * 100, 2),
-                    "macro_f1": round(float(f1_score(y_test, y_pred, average="macro")) * 100, 2),
-                    "precision_w": round(float(precision_score(y_test, y_pred, pos_label="Withdrawn", zero_division=0)) * 100, 2),
-                    "recall_w": round(float(recall_score(y_test, y_pred, pos_label="Withdrawn", zero_division=0)) * 100, 2),
-                    "f1_w": round(float(f1_score(y_test, y_pred, pos_label="Withdrawn", zero_division=0)) * 100, 2),
-                    "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)
-                }
-
-                if hasattr(pipe.named_steps["model"], "predict_proba"):
-                    classes = list(pipe.named_steps["model"].classes_)
-                    w_idx = classes.index("Withdrawn")
-                    y_prob = pipe.predict_proba(X_test)[:, w_idx]
-                    y_true_bin = (y_test == "Withdrawn").astype(int)
-                    metrics["ap_withdrawn"] = round(float(average_precision_score(y_true_bin, y_prob)), 4)
-                    metrics["roc_auc"] = round(float(roc_auc_score(y_true_bin, y_prob)), 4)
-
-                # Vẽ Ma trận nhầm lẫn
-                cm_fig_path = os.path.join(config.FIGURES_DIR, f"cm_{model_id}.png")
-                plot_confusion_matrix(tn, fp, fn, tp, model_label, cm_fig_path)
-
-                # Nếu là Random Forest thì vẽ thêm Permutation Importance
-                pi_path = os.path.join(config.FIGURES_DIR, f"perm_importance_{model_id}.png")
-                if selected["model_key"] == "rf":
-                    perm = permutation_importance(
-                        pipe, X_test, y_test, scoring="f1_macro",
-                        n_repeats=5, random_state=config.SEED, n_jobs=2
-                    )
-                    sorted_idx = perm.importances_mean.argsort()[-8:]
-                    fig, ax = plt.subplots(figsize=(8, 4.5))
-                    ax.barh(
-                        [config.ALL_FEATURES[i] for i in sorted_idx],
-                        perm.importances_mean[sorted_idx] * 100,
-                        xerr=perm.importances_std[sorted_idx] * 100,
-                        color="#3b6978"
-                    )
-                    ax.set_xlabel("Mức giảm Macro-F1 khi hoán vị (điểm phần trăm)")
-                    ax.set_title(f"Top 8 Đặc trưng quan trọng nhất\n{model_label}", fontsize=10)
-                    fig.tight_layout()
-                    plt.savefig(pi_path, dpi=200)
-                    plt.close(fig)
-
-                # Cập nhật file .joblib và xuất JSON
-                selected_copy = dict(selected)
-                filepath = selected_copy.pop("filepath")
-                selected_copy["test_metrics"] = metrics
-                joblib.dump(selected_copy, filepath)
-
-                json_payload = {
-                    "model_id": model_id,
-                    "model_key": selected["model_key"],
-                    "model_name": selected["model_name"],
-                    "model_label": model_label,
-                    "params": selected["params"],
-                    "cv_accuracy": selected["cv_accuracy"],
-                    "cv_macro_f1": selected["cv_macro_f1"],
-                    "test_metrics": metrics
-                }
-                json_path = os.path.join(config.METRICS_DIR, f"{model_id}_metrics.json")
-                with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(json_payload, f, indent=4, ensure_ascii=False)
-
+            try:
+                metrics, cm_fig_path, pi_path = evaluate_model_with_progress(
+                    selected, progress_callback=update_eval_ui
+                )
                 selected["test_metrics"] = metrics
-                st.success(f"✅ Đã chạy xong và lưu kết quả tại `results/metrics/{model_id}_metrics.json`!")
+                eval_status.empty()
+                st.success(
+                    f"✅ **Hoàn tất 100%!** Đã chạy mô hình trên tập Test và lưu kết quả!\n\n"
+                    f"• **Đường dẫn Tập Train đã dùng:** `{config.TRAIN_DATA_PATH}` (21.956 mẫu)\n\n"
+                    f"• **Đường dẫn Tập Test đã chấm điểm:** `{config.TEST_DATA_PATH}` (5.465 mẫu)\n\n"
+                    f"• **File lưu chỉ số JSON:** `{os.path.join(config.METRICS_DIR, selected['model_id'] + '_metrics.json')}`"
+                )
+            except Exception as e:
+                st.error(f"❌ Lỗi khi chạy kiểm thử: {e}")
 
-        # Hiển thị kết quả nếu mô hình đã có test_metrics
         if selected.get("test_metrics"):
             tm = selected["test_metrics"]
             model_id = selected["model_id"]
             st.markdown(f"#### 📊 Kết quả đánh giá trên Tập Test: `{selected['model_label']}`")
+
+            st.markdown(f"""
+            <div class="path-box">
+                • <b>Tập dữ liệu Train (80%):</b> <code>{config.TRAIN_DATA_PATH}</code> (21.956 dòng)<br>
+                • <b>Tập dữ liệu Test (20%):</b> <code>{config.TEST_DATA_PATH}</code> (5.465 dòng)
+            </div>
+            """, unsafe_allow_html=True)
 
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("Accuracy", f"{tm['accuracy']}%")
@@ -398,8 +409,8 @@ elif menu == "3. Chạy mô hình (Kiểm thử & Biểu đồ)":
             k5.metric("F1-Score (Withdrawn)", f"{tm['f1_w']}%")
 
             d1, d2, d3 = st.columns(3)
-            d1.info(f"🎯 **Phát hiện đúng Rút học phần (TP):** `{tm['tp']:,}` ca")
-            d2.warning(f"⚠️ **Bỏ sót Rút học phần (FN):** `{tm['fn']:,}` ca")
+            d1.info(f"🎯 **Phát hiện đúng bỏ học (TP):** `{tm['tp']:,}` ca")
+            d2.warning(f"⚠️ **Bỏ sót bỏ học (FN):** `{tm['fn']:,}` ca")
             d3.error(f"🔔 **Cảnh báo nhầm (FP):** `{tm['fp']:,}` ca")
 
             fig_col1, fig_col2 = st.columns(2)
@@ -474,7 +485,6 @@ elif menu == "4. Đối chứng đa mô hình":
             csv_path = os.path.join(config.METRICS_DIR, "comparison_report.csv")
             df_cmp[display_cols].to_csv(csv_path, index=False, encoding="utf-8-sig")
 
-            # Vẽ biểu đồ đối chứng
             x = np.arange(len(df_cmp))
             width = 0.35
             fig, ax = plt.subplots(figsize=(max(8.5, len(df_cmp) * 2.3), 4.8))
@@ -515,7 +525,6 @@ elif menu == "5. Dự đoán dữ liệu không nhãn":
     if not models:
         st.warning("⚠️ Chưa có mô hình nào được huấn luyện! Vui lòng vào **Mục 2** để huấn luyện trước.")
     else:
-        # Tạo danh sách hiển thị mô hình kèm độ chính xác
         model_choices = {}
         for i, m in enumerate(models, 1):
             lbl = m.get("model_label", m["model_name"])
@@ -557,9 +566,11 @@ elif menu == "5. Dự đoán dữ liệu không nhãn":
                 st.error(f"❌ File dữ liệu thiếu các cột đặc trưng bắt buộc: {missing_cols}")
             else:
                 if st.button("🚀 Chạy Dự đoán & Xuất file có nhãn", type="primary"):
+                    pred_prog = st.progress(0, text="⏳ [0%] Đang nạp mô hình và dữ liệu không nhãn...")
                     pipe = chosen_model["pipeline"]
                     model_id = chosen_model["model_id"]
 
+                    pred_prog.progress(40, text="⏳ [40%] Đang dự đoán nhãn và tính xác suất bỏ học...")
                     X_unlabeled = df_input[config.ALL_FEATURES]
                     df_out = df_input.copy()
                     df_out["predicted_target"] = pipe.predict(X_unlabeled)
@@ -572,20 +583,22 @@ elif menu == "5. Dự đoán dữ liệu không nhãn":
                     except Exception:
                         df_out["withdrawn_probability_%"] = "N/A (SVM probability=False)"
 
+                    pred_prog.progress(85, text="⏳ [85%] Đang xuất kết quả ra file CSV...")
                     out_filename = f"{source_name}__predicted_by__{model_id}.csv"
                     out_path = os.path.join(config.PREDICTIONS_DIR, out_filename)
                     df_out.to_csv(out_path, index=False, encoding="utf-8-sig")
+                    pred_prog.progress(100, text="✅ [100%] Dự đoán hoàn tất!")
 
                     n_total = len(df_out)
                     n_w = int((df_out["predicted_target"] == "Withdrawn").sum())
                     n_nw = n_total - n_w
 
-                    st.success(f"✅ Đã gán nhãn xong {n_total} dòng và lưu tại: `data/predictions/{out_filename}`")
+                    st.success(f"✅ Đã gán nhãn xong {n_total} dòng và lưu tại: `{out_path}`")
 
                     p1, p2, p3 = st.columns(3)
                     p1.metric("Tổng số dòng dự đoán", f"{n_total:,}")
-                    p2.metric("Dự đoán Rút học phần (Withdrawn)", f"{n_w:,} ca", f"{n_w/n_total*100:.2f}%")
-                    p3.metric("Dự đoán Không rút (Not_withdrawn)", f"{n_nw:,} ca", f"{n_nw/n_total*100:.2f}%")
+                    p2.metric("Dự đoán bỏ học (Withdrawn)", f"{n_w:,} ca", f"{n_w/n_total*100:.2f}%")
+                    p3.metric("Dự đoán Không bỏ học (Not_withdrawn)", f"{n_nw:,} ca", f"{n_nw/n_total*100:.2f}%")
 
                     st.markdown("#### 📋 Bảng dữ liệu sau khi đã gán nhãn dự đoán:")
                     priority_cols = [
@@ -613,15 +626,14 @@ elif menu == "5. Dự đoán dữ liệu không nhãn":
 elif menu == "6. Tìm kiếm sinh viên (Tra cứu 39 cột)":
     st.subheader("🔍 6. Tra cứu Hồ sơ & 39 Thuộc tính của Sinh viên")
 
-    feat_path = os.path.join(config.PROCESSED_DATA_DIR, "features_day28.csv")
-    if not os.path.exists(feat_path):
+    if not os.path.exists(config.FEATURES_DATA_PATH):
         st.warning("⚠️ Chưa có file `features_day28.csv`! Vui lòng chạy **Mục 1. Chạy tiền xử lý dữ liệu** trước.")
     else:
-        df = pd.read_csv(feat_path)
+        df = pd.read_csv(config.FEATURES_DATA_PATH)
         sample_ids = df["id_student"].drop_duplicates().head(8).tolist()
         st.caption(f"💡 Gợi ý một số mã `id_student` có trong dữ liệu: `{sample_ids}` (hoặc sinh viên dòng 334: `{int(df.iloc[334]['id_student'])}`)")
 
-        col_s1, col_s2 = st.columns([2, 1])
+        col_s1, _ = st.columns([2, 1])
         with col_s1:
             student_id_input = st.text_input("👉 Nhập mã sinh viên (id_student) cần tra cứu:", value=str(int(df.iloc[334]["id_student"])))
 
@@ -636,7 +648,7 @@ elif menu == "6. Tìm kiếm sinh viên (Tra cứu 39 cột)":
 
                 for idx, (_, row) in enumerate(records.iterrows(), 1):
                     target_val = row.get(config.TARGET_COL, "N/A")
-                    badge = "🔴 Withdrawn (Rút học phần)" if target_val == "Withdrawn" else "🟢 Not_withdrawn (Không rút)"
+                    badge = "🔴 Withdrawn (bỏ học)" if target_val == "Withdrawn" else "🟢 Not_withdrawn (Không bỏ học)"
                     with st.expander(
                         f"📌 Lượt đăng ký #{idx}: Học phần {row['code_module']} | Đợt mở lớp {row.get('code_presentation', 'N/A')} — Nhãn thực tế: {badge}",
                         expanded=True
