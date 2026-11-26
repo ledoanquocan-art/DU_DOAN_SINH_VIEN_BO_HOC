@@ -22,9 +22,20 @@ from src.pipeline_utils import (
     open_file_on_os
 )
 from src.evaluator import evaluate_model_with_progress
-from src.predictor import create_sample_unlabeled_file
 
 warnings.filterwarnings("ignore")
+from src.data_audit import (
+    run_raw_audit,
+    plot_audit_dashboard,
+    plot_vle_timeline,
+    plot_dropout_rate_by_category,
+    plot_behavior_comparison,
+    plot_correlation_heatmap,
+)
+
+@st.cache_data(show_spinner=False)
+def cached_raw_audit():
+    return run_raw_audit()
 
 # =====================================================================
 # CẤU HÌNH TRANG WEB & CSS GIAO DIỆN
@@ -119,8 +130,119 @@ with st.sidebar:
 # CHỨC NĂNG 1: TIỀN XỬ LÝ DỮ LIỆU & CHIA TRAIN / TEST (CÓ THANH %)
 # =====================================================================
 if menu == "1. Chạy tiền xử lý dữ liệu":
-    st.subheader("🛠️ 1. Khảo sát OULAD, Lọc nhóm dự báo ngày 28, Trích xuất 39 đặc trưng & Chia Train/Test")
-    st.write(
+    st.header("🛠️ 1. Kiểm toán (Audit), Khám phá (EDA) & Tiền xử lý dữ liệu OULAD")
+
+    tab_audit, tab_eda, tab_clean = st.tabs([
+        "🔍 A. Audit Dữ liệu Gốc (Raw)",
+        "📊 B. EDA Khám phá OULAD",
+        "⚙️ C. Chạy Clean Data & Chia Train/Test"
+    ])
+
+    # ==========================================================
+    # TAB A: AUDIT DỮ LIỆU GỐC TRỰC QUAN
+    # ==========================================================
+    with tab_audit:
+        st.subheader("Kiểm toán chất lượng 7/7 bảng gốc trong data/raw/")
+        with st.spinner("⏳ Đang quét kiểm toán 7 bảng gốc OULAD (chỉ chạy 1 lần và lưu cache)..."):
+            audit_res = cached_raw_audit()
+
+        fn = audit_res["funnel"]
+        vle_s = audit_res["vle_stats"]
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Lượt đăng ký gốc", f"{fn['n_raw']:,}", f"{fn['n_sv_raw']:,} SV duy nhất")
+        c2.metric("Tổng ca bị loại (4 bước)", f"{fn['n_raw'] - fn['n_clean']:,}", f"-{(fn['n_raw']-fn['n_clean'])/fn['n_raw']*100:.2f}%", delta_color="inverse")
+        c3.metric("Rò rỉ bỏ học ≤ ngày 28", f"{fn['step4_removed']:,}", "Chặn Anti-Leakage", delta_color="inverse")
+        c4.metric("Lượt lặp mã SV (đa môn)", f"{fn['n_repeat_raw']:,}", "Bắt buộc GroupSplit")
+
+        # Biểu đồ Dashboard 4 khung
+        fig_audit = plot_audit_dashboard(audit_res)
+        st.pyplot(fig_audit, use_container_width=True)
+        plt.close(fig_audit)
+
+        col_t1, col_t2 = st.columns([1.35, 1.0])
+        with col_t1:
+            st.markdown("**📋 Thống kê quy mô & toàn vẹn 7 bảng gốc:**")
+            st.dataframe(audit_res["df_tables"], use_container_width=True, hide_index=True)
+        with col_t2:
+            st.markdown("**⚠️ Báo cáo cột có giá trị khuyết (Missing NaN / '?'):**")
+            if not audit_res["df_missing"].empty:
+                st.dataframe(audit_res["df_missing"], use_container_width=True, hide_index=True)
+            else:
+                st.success("Không phát hiện cột nào khuyết dữ liệu.")
+
+        st.markdown("**🕒 Kiểm toán dòng thời gian nhật ký VLE (`studentVle.csv`):**")
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("Trước khai giảng (date < 0)", f"{vle_s['pre_course_rows']:,}", "Khai thác Pre-course")
+        v2.metric(f"Cửa sổ hợp lệ (0–{config.CUTOFF_DAY})", f"{vle_s['in_window_rows']:,}", "Tín hiệu chính")
+        v3.metric(f"Sau ngày {config.CUTOFF_DAY} (Cắt bỏ)", f"{vle_s['after_cutoff_rows']:,}", "Chống Data Leakage", delta_color="inverse")
+        v4.metric("Max click / 1 dòng log", f"{vle_s['max_single_click']:,}", f"{vle_s['clicks_gt_50']:,} dòng > 50 click")
+
+        fig_vle = plot_vle_timeline(audit_res["vle_date_series"])
+        st.pyplot(fig_vle, use_container_width=True)
+        plt.close(fig_vle)
+
+    # ==========================================================
+    # TAB B: EDA KHÁM PHÁ DỮ LIỆU OULAD
+    # ==========================================================
+    with tab_eda:
+        st.subheader("Phân tích khám phá (EDA) mối liên hệ với nguy cơ Bỏ học")
+        audit_res = cached_raw_audit()
+        df_clean_eda = audit_res["df_clean_preview"]
+
+        cat_map = {
+            "code_module": "Mã học phần (code_module)",
+            "highest_education": "Trình độ học vấn (highest_education)",
+            "imd_band": "Chỉ số kinh tế – xã hội (imd_band)",
+            "age_band": "Nhóm tuổi (age_band)",
+            "region": "Khu vực địa lý (region)",
+            "gender": "Giới tính (gender)",
+            "disability": "Tình trạng khuyết tật (disability)",
+        }
+        chosen_cat = st.selectbox(
+            "Chọn thuộc tính nhân khẩu học / học phần để phân tích tỷ lệ Bỏ học:",
+            options=list(cat_map.keys()),
+            format_func=lambda k: cat_map[k]
+        )
+        fig_cat = plot_dropout_rate_by_category(df_clean_eda, chosen_cat, cat_map[chosen_cat])
+        st.pyplot(fig_cat, use_container_width=True)
+        plt.close(fig_cat)
+
+        st.divider()
+        st.markdown("**📈 EDA Hành vi học tập, Ngoại lai & Tương quan trên bảng 50 đặc trưng:**")
+        if os.path.exists(config.FEATURES_DATA_PATH):
+            df_feat_eda = pd.read_csv(config.FEATURES_DATA_PATH)
+
+            fig_beh = plot_behavior_comparison(df_feat_eda)
+            st.pyplot(fig_beh, use_container_width=True)
+            plt.close(fig_beh)
+
+            # Bảng phân vị Outlier (P50 / P95 / P99 / Max)
+            check_cols = [
+                c for c in [
+                    "total_clicks", "active_days", "recency_days", "pre_course_clicks",
+                    "clicks_d0_6", "clicks_d21_28", "mean_score_d28", "missing_assessments_d28"
+                ] if c in df_feat_eda.columns
+            ]
+            q_df = df_feat_eda[check_cols].quantile([0.0, 0.25, 0.5, 0.75, 0.95, 0.99, 1.0]).T
+            q_df.columns = ["Min", "Q1 (25%)", "Median (50%)", "Q3 (75%)", "P95", "P99", "Max"]
+            st.markdown("**🔎 Bảng phân vị & kiểm tra Outlier các đặc trưng số cốt lõi:**")
+            st.dataframe(q_df.round(2), use_container_width=True)
+
+            with st.expander("🔥 Xem Ma trận tương quan (Correlation Heatmap) — giải thích đa cộng tuyến"):
+                fig_corr = plot_correlation_heatmap(df_feat_eda)
+                st.pyplot(fig_corr, use_container_width=True)
+                plt.close(fig_corr)
+        else:
+            st.info("👉 Vui lòng sang tab **⚙️ C. Chạy Clean Data & Chia Train/Test** để tạo `features_day28.csv`, sau đó biểu đồ hành vi 4 tuần, bảng Outlier và Heatmap tương quan sẽ tự động hiển thị tại đây.")
+
+    # ==========================================================
+    # TAB C: CHẠY CLEAN DATA & CHIA TRAIN/TEST (GIỮ NGUYÊN CODE CŨ)
+    # ==========================================================
+    with tab_clean:
+        # Dán toàn bộ đoạn code nút "Bắt đầu chạy Tiền xử lý dữ liệu", thanh tiến trình %,
+        # đường dẫn train_day28.csv / test_day28.csv và bảng xem trước cũ của bạn vào đây.
+            st.write(
         "Quy trình tự động kiểm tra 7 bảng gốc trong `data/raw/`, lọc 4 bước thu về **27.421 lượt đăng ký hợp lệ**, "
         "tổng hợp 39 đặc trưng VLE và tách sẵn **Tập Train (80%) / Tập Test (20%)** theo `id_student`."
     )
@@ -167,15 +289,6 @@ if menu == "1. Chạy tiền xử lý dữ liệu":
         m3.metric("Bỏ học (Withdrawn)", f"{n_w:,}", f"{n_w/n_total*100:.2f}%")
         m4.metric("Tỷ lệ Chia Train / Test", "21.956 / 5.465", "80% Train - 20% Test")
 
-        st.markdown(f"""
-        <div class="path-box">
-            <b>📂 VỊ TRÍ LƯU TẬP DỮ LIỆU TRÊN MÁY TÍNH:</b><br>
-            • <b>Bảng 39 đặc trưng đầy đủ (27.421 dòng):</b> <code>{config.FEATURES_DATA_PATH}</code><br>
-            • <b>Tập dữ liệu TRAIN (80% = 21.956 dòng):</b> <code>{config.TRAIN_DATA_PATH}</code><br>
-            • <b>Tập dữ liệu TEST (20% = 5.465 dòng):</b> <code>{config.TEST_DATA_PATH}</code>
-        </div>
-        """, unsafe_allow_html=True)
-
         c_left, c_right = st.columns([1, 1.4])
         with c_left:
             fig_dist = os.path.join(config.FIGURES_DIR, "fig3_1_label_distribution.png")
@@ -201,6 +314,8 @@ if menu == "1. Chạy tiền xử lý dữ liệu":
                     st.dataframe(df_te, use_container_width=True, height=250)
     else:
         st.info("💡 Chưa có dữ liệu đã xử lý. Hãy bấm nút **Bắt đầu chạy Tiền xử lý dữ liệu** ở trên.")
+        pass
+
 
 
 # =====================================================================
