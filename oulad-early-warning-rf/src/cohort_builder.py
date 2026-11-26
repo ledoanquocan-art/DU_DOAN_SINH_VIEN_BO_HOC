@@ -1,96 +1,143 @@
 import os
-import hashlib
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from src import config
 
+
+REQUIRED_RAW_FILES = [
+    "studentInfo.csv",
+    "studentRegistration.csv",
+    "courses.csv",
+    "vle.csv",
+    "studentVle.csv",
+    "assessments.csv",
+    "studentAssessment.csv"
+]
+
+
 def verify_raw_files():
-    """Kiểm tra sự tồn tại của các bảng OULAD cần thiết trong data/raw/."""
-    required = ["studentInfo.csv", "studentRegistration.csv", "studentVle.csv", "vle.csv"]
-    missing = [f for f in required if not os.path.exists(os.path.join(config.RAW_DATA_DIR, f))]
+    """Kiểm tra đầy đủ 7 bảng gốc của bộ dữ liệu OULAD trong data/raw/."""
+    missing = [
+        f for f in REQUIRED_RAW_FILES
+        if not os.path.exists(os.path.join(config.RAW_DATA_DIR, f))
+    ]
     if missing:
         raise FileNotFoundError(
-            f"Thiếu các file dữ liệu gốc trong 'data/raw/': {missing}.\n"
-            f"Vui lòng giải nén bộ OULAD (anonymisedData.zip) vào thư mục data/raw/ trước khi chạy!"
+            f"Thiếu các file OULAD gốc trong {config.RAW_DATA_DIR}: {missing}"
         )
+    print("✔ Đã xác nhận đủ 7 bảng dữ liệu gốc OULAD trong data/raw/.")
 
-def build_cohort():
-    """Khảo sát dữ liệu, lọc tuần tự nhóm dự báo tại ngày 28 và xuất cohort_day28.csv."""
-    verify_raw_files()
-    
-    info_path = os.path.join(config.RAW_DATA_DIR, "studentInfo.csv")
-    reg_path = os.path.join(config.RAW_DATA_DIR, "studentRegistration.csv")
-    
-    info = pd.read_csv(info_path)
-    reg = pd.read_csv(reg_path)
-    
-    # Ghép bảng theo bộ ba khóa chính với kiểm tra quan hệ 1-1
-    base = info.merge(reg, on=config.PRIMARY_KEY, validate="one_to_one")
-    n_init = len(base)
-    
-    # Bước lọc 1: Nhãn final_result=Withdrawn và date_unregistration phải nhất quán
-    cond_consistent = (base["final_result"].eq("Withdrawn") == base["date_unregistration"].notna())
-    step1 = base.loc[cond_consistent].copy()
-    n_step1 = len(step1)
-    
-    # Bước lọc 2: Có ngày đăng ký hợp lệ
-    cond_has_reg = step1["date_registration"].notna()
-    step2 = step1.loc[cond_has_reg].copy()
-    n_step2 = len(step2)
-    
-    # Bước lọc 3: Đăng ký vào hoặc trước ngày 28
-    cond_reg_before_cutoff = step2["date_registration"].le(config.CUTOFF_DAY)
-    step3 = step2.loc[cond_reg_before_cutoff].copy()
-    n_step3 = len(step3)
-    
-    # Bước lọc 4: Chưa rút học phần tại ngày 28 (date_unregistration là NaN hoặc > 28)
-    cond_still_active = step3["date_unregistration"].isna() | step3["date_unregistration"].gt(config.CUTOFF_DAY)
-    cohort = step3.loc[cond_still_active].copy()
-    n_final = len(cohort)
-    
-    # Tạo nhãn mục tiêu: Withdrawn vs Not_withdrawn (gộp Fail, Pass, Distinction)
-    cohort[config.TARGET_COL] = np.where(
-        cohort["final_result"].eq("Withdrawn"), "Withdrawn", "Not_withdrawn"
+
+def plot_label_distribution(df, save_path):
+    """Vẽ và lưu biểu đồ phân phối nhãn (Hình 3.1)."""
+    counts = df[config.TARGET_COL].value_counts().reindex(["Not_withdrawn", "Withdrawn"])
+    total = len(df)
+
+    fig, ax = plt.subplots(figsize=(6.2, 4.2))
+    bars = ax.bar(
+        ["Không rút\n(Not_withdrawn)", "Rút học phần\n(Withdrawn)"],
+        counts.values,
+        color=["#3b6978", "#d97706"],
+        width=0.52
     )
-    
-    print("\n" + "="*60)
-    print("📊 BẢNG KIỂM TRA LỌC TUẦN TỰ NHÓM DỰ BÁO TẠI NGÀY 28 (OULAD)")
-    print("="*60)
-    print(f"  • Ban đầu                                : {n_init:,} dòng")
-    print(f"  • Loại nhãn & ngày rút không nhất quán   : -{n_init - n_step1:,} -> Còn {n_step1:,} dòng")
-    print(f"  • Loại thiếu ngày đăng ký                : -{n_step1 - n_step2:,} -> Còn {n_step2:,} dòng")
-    print(f"  • Loại đăng ký sau ngày 28               : -{n_step2 - n_step3:,} -> Còn {n_step3:,} dòng")
-    print(f"  • Loại đã rút vào hoặc trước ngày 28     : -{n_step3 - n_final:,} -> Còn {n_final:,} dòng")
-    
-    n_withdrawn = int((cohort[config.TARGET_COL] == "Withdrawn").sum())
-    n_not_withdrawn = int((cohort[config.TARGET_COL] == "Not_withdrawn").sum())
-    n_students = cohort["id_student"].nunique()
-    print("-"*60)
-    print(f"  ✔ Tổng mẫu hợp lệ : {n_final:,} lượt đăng ký ({n_students:,} sinh viên)")
-    print(f"  ✔ Not_withdrawn   : {n_not_withdrawn:,} ({n_not_withdrawn/n_final*100:.2f}%)")
-    print(f"  ✔ Withdrawn       : {n_withdrawn:,} ({n_withdrawn/n_final*100:.2f}%)")
-    print("="*60)
-    
-    # Lưu file cohort_day28.csv
-    out_csv = os.path.join(config.PROCESSED_DATA_DIR, "cohort_day28.csv")
-    cohort.to_csv(out_csv, index=False)
-    print(f"  💾 Đã lưu nhóm dự báo tại: {out_csv}")
-    
-    # Vẽ biểu đồ Hình 3.1: Phân phối nhãn
-    fig, ax = plt.subplots(figsize=(6.5, 3.2))
-    labels = ["Không rút học phần", "Rút học phần"]
-    counts = [n_not_withdrawn, n_withdrawn]
-    bars = ax.bar(labels, counts, color=["#98b4be", "#3b6978"], width=0.5)
-    ax.set_ylabel("Lượt đăng ký")
-    ax.set_ylim(0, max(counts) * 1.18)
-    ax.bar_label(bars, labels=[f"{c:,}" for c in counts], padding=4, fontweight="bold")
+    ax.set_ylabel("Số lượt đăng ký")
+    ax.set_title(f"Phân phối nhãn trên {total:,} lượt đăng ký tại ngày {config.CUTOFF_DAY}")
+    ax.set_ylim(0, counts.max() * 1.18)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+
+    for bar, val in zip(bars, counts.values):
+        pct = val / total * 100
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            val + total * 0.015,
+            f"{val:,}\n({pct:.2f}%)",
+            ha="center", va="bottom", fontsize=10, fontweight="bold"
+        )
+
     fig.tight_layout()
-    
-    fig_path = os.path.join(config.FIGURES_DIR, "fig3_1_label_distribution.png")
-    plt.savefig(fig_path, dpi=200)
+    plt.savefig(save_path, dpi=200)
     plt.close(fig)
-    print(f"  📈 Đã lưu biểu đồ phân phối nhãn tại: {fig_path}")
-    return cohort
+
+
+def build_cohort():
+    """
+    Khảo sát dữ liệu gốc, lọc 4 bước chống rò rỉ dữ liệu tại ngày 28 (t = 28),
+    tạo nhãn nhị phân target và xuất cohort_day28.csv.
+    """
+    verify_raw_files()
+
+    info_path = os.path.join(config.RAW_DATA_DIR, "studentInfo.csv")
+    reg_path = os.path.join(config.RAW_DATA_DIR, "studentRegistration.csv")
+
+    # Đọc và chuẩn hóa các ký hiệu missing ('?', '') về NaN
+    df_info = pd.read_csv(info_path, na_values=["?", ""])
+    df_reg = pd.read_csv(reg_path, na_values=["?", ""])
+
+    # Ép kiểu số an toàn cho ngày đăng ký và ngày rút môn
+    df_reg["date_registration"] = pd.to_numeric(df_reg["date_registration"], errors="coerce")
+    df_reg["date_unregistration"] = pd.to_numeric(df_reg["date_unregistration"], errors="coerce")
+
+    # Chuẩn hóa chuỗi cho các cột phân loại (loại khoảng trắng thừa nếu có)
+    for col in config.CATEGORICAL_FEATURES:
+        if col in df_info.columns:
+            df_info[col] = df_info[col].astype("string").str.strip()
+
+    # Ghép 1-1 trên khóa chính (code_module, code_presentation, id_student)
+    df = pd.merge(df_info, df_reg, on=config.PRIMARY_KEY, how="inner", validate="one_to_one")
+    n_raw = len(df)
+    print(f"  [Audit] Tổng lượt đăng ký gốc sau khi ghép 1-1: {n_raw:,} dòng")
+
+    # Bước 1: Loại bản ghi mâu thuẫn giữa final_result và date_unregistration
+    mask_inconsistent = (
+        ((df["final_result"] == "Withdrawn") & df["date_unregistration"].isna()) |
+        ((df["final_result"] != "Withdrawn") & df["date_unregistration"].notna())
+    )
+    n_step1 = int(mask_inconsistent.sum())
+    df = df.loc[~mask_inconsistent].copy()
+    print(f"  [Bước 1] Loại mâu thuẫn nhãn & ngày rút        : -{n_step1:,} dòng -> còn {len(df):,}")
+
+    # Bước 2: Loại bản ghi thiếu date_registration
+    mask_missing_reg = df["date_registration"].isna()
+    n_step2 = int(mask_missing_reg.sum())
+    df = df.loc[~mask_missing_reg].copy()
+    print(f"  [Bước 2] Loại thiếu ngày đăng ký               : -{n_step2:,} dòng -> còn {len(df):,}")
+
+    # Bước 3: Loại bản ghi đăng ký sau mốc ngày 28
+    mask_late_reg = df["date_registration"] > config.CUTOFF_DAY
+    n_step3 = int(mask_late_reg.sum())
+    df = df.loc[~mask_late_reg].copy()
+    print(f"  [Bước 3] Loại đăng ký muộn (date_reg > {config.CUTOFF_DAY})     : -{n_step3:,} dòng -> còn {len(df):,}")
+
+    # Bước 4 (Chống Data Leakage): Loại các ca đã rút vào hoặc trước ngày 28
+    mask_early_withdraw = df["date_unregistration"].notna() & (df["date_unregistration"] <= config.CUTOFF_DAY)
+    n_step4 = int(mask_early_withdraw.sum())
+    df = df.loc[~mask_early_withdraw].copy()
+    print(f"  [Bước 4] Loại đã rút <= ngày {config.CUTOFF_DAY} (Anti-leakage) : -{n_step4:,} dòng -> còn {len(df):,}")
+
+    # Định nghĩa nhãn mục tiêu nhị phân và số ngày tính từ lúc đăng ký đến ngày 28
+    df[config.TARGET_COL] = df["final_result"].apply(
+        lambda x: "Withdrawn" if x == "Withdrawn" else "Not_withdrawn"
+    )
+    df["days_since_registration"] = (config.CUTOFF_DAY - df["date_registration"]).astype(float)
+
+    # Loại bỏ các cột gây rò rỉ tương lai khỏi file cohort chuẩn (chỉ giữ final_result để đối chiếu nếu cần)
+    keep_cols = (
+        config.PRIMARY_KEY
+        + [c for c in config.CATEGORICAL_FEATURES if c not in config.PRIMARY_KEY]
+        + ["num_of_prev_attempts", "studied_credits", "days_since_registration", "final_result", config.TARGET_COL]
+    )
+    df = df[keep_cols].reset_index(drop=True)
+
+    # Xác thực toàn vẹn dữ liệu đầu ra
+    assert not df.duplicated(subset=config.PRIMARY_KEY).any(), "Phát hiện trùng khóa chính trong cohort!"
+    df.to_csv(config.COHORT_DATA_PATH, index=False)
+
+    fig_path = os.path.join(config.FIGURES_DIR, "fig3_1_label_distribution.png")
+    plot_label_distribution(df, fig_path)
+
+    n_w = int((df[config.TARGET_COL] == "Withdrawn").sum())
+    n_nw = int((df[config.TARGET_COL] == "Not_withdrawn").sum())
+    print(f"✔ Đã xuất cohort_day28.csv: {len(df):,} dòng ({df['id_student'].nunique():,} SV) | "
+          f"Not_withdrawn: {n_nw:,} ({n_nw/len(df)*100:.2f}%) | Withdrawn: {n_w:,} ({n_w/len(df)*100:.2f}%)")
+    return df

@@ -26,14 +26,13 @@ CUTOFF_DAY = 28
 PRIMARY_KEY = ["code_module", "code_presentation", "id_student"]
 TARGET_COL = "target"
 
-# --- DANH SÁCH 39 ĐẶC TRƯNG ---
-# 1. 7 biến phân loại (Categorical)
+# --- NHÓM 1: 7 ĐẶC TRƯNG PHÂN LOẠI (NHÂN KHẨU HỌC & MÔN HỌC) ---
 CATEGORICAL_FEATURES = [
     "code_module", "gender", "region", "highest_education",
     "imd_band", "age_band", "disability"
 ]
 
-# 2. 12 biến số nền & tương tác tổng quát (Numerical)
+# --- NHÓM 2: 12 ĐẶC TRƯNG SỐ CƠ BẢN (ĐĂNG KÝ & TƯƠNG TÁC NGÀY 0-28) ---
 BASE_NUMERICAL_FEATURES = [
     "num_of_prev_attempts", "studied_credits", "days_since_registration",
     "total_clicks", "active_days", "unique_sites", "recency_days",
@@ -41,7 +40,7 @@ BASE_NUMERICAL_FEATURES = [
     "clicks_d14_20", "clicks_d21_28"
 ]
 
-# 3. 20 biến tương tác theo loại tài nguyên VLE
+# --- NHÓM 3: 20 ĐẶC TRƯNG CLICK THEO LOẠI TÀI NGUYÊN VLE ---
 ACTIVITY_TYPES = [
     "dataplus", "dualpane", "externalquiz", "folder", "forumng", "glossary",
     "homepage", "htmlactivity", "oucollaborate", "oucontent", "ouelluminate",
@@ -50,6 +49,29 @@ ACTIVITY_TYPES = [
 ]
 ACTIVITY_FEATURES = [f"activity_clicks_{act}" for act in ACTIVITY_TYPES]
 
-# Tổng hợp
-NUMERICAL_FEATURES = BASE_NUMERICAL_FEATURES + ACTIVITY_FEATURES
+# --- NHÓM 4 (CẢI TIẾN): 11 ĐẶC TRƯNG NÂNG CAO (ASSESSMENTS + PRE-COURSE + TREND) ---
+ASSESSMENT_FEATURES = [
+    "num_submitted_d28",
+    "mean_score_d28",
+    "missing_assessments_d28",
+    "avg_submission_delay_d28"
+]
+
+PRECOURSE_FEATURES = [
+    "pre_course_clicks",
+    "pre_course_active_days"
+]
+
+TREND_FEATURES = [
+    "click_trend_w4_vs_w1",
+    "click_trend_w4_vs_w3",
+    "zero_click_weeks",
+    "trailing_zero_weeks",
+    "click_std_4w"
+]
+
+ENHANCED_NUMERICAL_FEATURES = ASSESSMENT_FEATURES + PRECOURSE_FEATURES + TREND_FEATURES
+
+# Tổng hợp toàn bộ đặc trưng đầu vào (7 phân loại + 43 biến số = 50 đặc trưng)
+NUMERICAL_FEATURES = BASE_NUMERICAL_FEATURES + ACTIVITY_FEATURES + ENHANCED_NUMERICAL_FEATURES
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERICAL_FEATURES

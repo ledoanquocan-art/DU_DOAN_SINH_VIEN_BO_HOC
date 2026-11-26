@@ -45,7 +45,7 @@ def train_submenu():
 def main():
     while True:
         print("\n" + "=" * 72)
-        print("🎓 HỆ THỐNG CẢNH BÁO NGUY CƠ BỎ HỌC DỰA TRÊN DỮ LIỆU VLE (OU-LAD)")
+        print("🎓 HỆ THỐNG CẢNH BÁO NGUY CƠ BỎ HỌC PHẦN DỰA TRÊN DỮ LIỆU VLE (OU-LAD)")
         print("=" * 72)
         print("  1. Chạy tiền xử lý dữ liệu (Lọc Cohort, Tạo 39 đặc trưng & Chia Train/Test)")
         print("  2. Huấn luyện mô hình (Có thanh % tiến trình & báo đường dẫn Train/Test)")
