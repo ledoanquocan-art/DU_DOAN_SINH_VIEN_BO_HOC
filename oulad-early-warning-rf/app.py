@@ -22,6 +22,7 @@ from src.pipeline_utils import (
     open_file_on_os
 )
 from src.evaluator import evaluate_model_with_progress
+from src.predictor import list_saved_models, predict_unlabeled_dataframe
 
 warnings.filterwarnings("ignore")
 from src.data_audit import (
@@ -634,105 +635,55 @@ elif menu == "4. Đối chứng đa mô hình":
 # CHỨC NĂNG 5: DỰ ĐOÁN FILE DỮ LIỆU KHÔNG NHÃN & MỞ FILE
 # =====================================================================
 elif menu == "5. Dự đoán dữ liệu không nhãn":
-    st.subheader("🔮 5. Dự đoán Dữ liệu Không Nhãn bằng Mô hình Đã Huấn luyện")
-
     models = list_saved_models()
     if not models:
-        st.warning("⚠️ Chưa có mô hình nào được huấn luyện! Vui lòng vào **Mục 2** để huấn luyện trước.")
+        st.warning("Chưa có mô hình nào trong results/models/. Hãy chạy Mục 2 trước.")
     else:
-        model_choices = {}
-        for i, m in enumerate(models, 1):
-            lbl = m.get("model_label", m["model_name"])
-            if m.get("test_metrics"):
-                tm = m["test_metrics"]
-                acc_txt = f"Test Acc: {tm['accuracy']}% | Test Macro-F1: {tm['macro_f1']}% | Recall W: {tm['recall_w']}%"
-            else:
-                acc_txt = f"CV Acc: {m['cv_accuracy']}% | CV Macro-F1: {m['cv_macro_f1']}%"
-            model_choices[f"[{i}] {lbl}  —  🎯 {acc_txt}"] = m
+        labels = [m["label"] for m in models]
+        sel_idx = st.selectbox("Chọn mô hình dự đoán (kèm chỉ số chính xác):", range(len(models)), format_func=lambda i: labels[i])
+        selected_model = models[sel_idx]
 
-        chosen_model_key = st.selectbox("👉 Bước 1: Chọn mô hình muốn sử dụng (kèm độ chính xác):", list(model_choices.keys()))
-        chosen_model = model_choices[chosen_model_key]
-
-        st.markdown("#### 📂 Bước 2: Cung cấp file dữ liệu không nhãn (`.csv`)")
-        data_source = st.radio(
-            "Chọn nguồn dữ liệu đầu vào:",
-            ["Dùng file mẫu không nhãn có sẵn (50 sinh viên kèm ca mẫu dòng 334)", "Tải lên file CSV từ máy tính"],
-            horizontal=True
+        uploaded_file = st.file_uploader(
+            "Tải lên file .csv sinh viên không nhãn",
+            type=["csv"]
         )
 
-        df_input = None
-        source_name = "sample_unlabeled_students"
+        if uploaded_file is not None and st.button("🚀 Bắt đầu dự đoán", type="primary"):
+            df_raw = pd.read_csv(uploaded_file, na_values=["?", ""])
+            pbar = st.progress(0, text="Đang khởi tạo dự đoán...")
 
-        if data_source.startswith("Dùng file mẫu"):
-            sample_path = create_sample_unlabeled_file()
-            df_input = pd.read_csv(sample_path)
-            st.caption(f"Đang sử dụng file mẫu: `{sample_path}` ({len(df_input)} bản ghi)")
-        else:
-            uploaded = st.file_uploader("Tải lên file CSV chứa 39 cột đặc trưng:", type=["csv"])
-            if uploaded is not None:
-                df_input = pd.read_csv(uploaded)
-                source_name = os.path.splitext(uploaded.name)[0]
+            def update_ui(pct, msg):
+                pbar.progress(int(pct), text=f"{pct}% — {msg}")
 
-        auto_open = st.checkbox("📂 Tự động mở luôn file kết quả trên màn hình máy tính (Excel/CSV) sau khi dự đoán", value=True)
+            df_res, summary = predict_unlabeled_dataframe(
+                df_raw=df_raw,
+                model_path=selected_model["path"],
+                progress_callback=update_ui
+            )
 
-        if df_input is not None:
-            missing_cols = [c for c in config.ALL_FEATURES if c not in df_input.columns]
-            if missing_cols:
-                st.error(f"❌ File dữ liệu thiếu các cột đặc trưng bắt buộc: {missing_cols}")
-            else:
-                if st.button("🚀 Chạy Dự đoán & Xuất file có nhãn", type="primary"):
-                    pred_prog = st.progress(0, text="⏳ [0%] Đang nạp mô hình và dữ liệu không nhãn...")
-                    pipe = chosen_model["pipeline"]
-                    model_id = chosen_model["model_id"]
+            rep = summary["align_report"]
+            if rep["missing_core"]:
+                st.error(f"🚨 Cảnh báo: File thiếu các cột lõi {rep['missing_core']} — độ tin cậy dự đoán có thể bị giảm.")
+            elif rep["auto_computed"] or rep["filled_zero_vle"] or rep["filled_nan_other"]:
+                st.info(
+                    f"ℹ️ Đã tự động đồng bộ {rep['expected_count']} đặc trưng: "
+                    f"khớp trực tiếp {rep['provided_count']} cột, tự tính lại {len(rep['auto_computed'])} cột dẫn xuất, "
+                    f"điền 0 cho {len(rep['filled_zero_vle'])} cột VLE thưa và để Imputer xử lý {len(rep['filled_nan_other'])} cột phụ."
+                )
 
-                    pred_prog.progress(40, text="⏳ [40%] Đang dự đoán nhãn và tính xác suất bỏ học...")
-                    X_unlabeled = df_input[config.ALL_FEATURES]
-                    df_out = df_input.copy()
-                    df_out["predicted_target"] = pipe.predict(X_unlabeled)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Tổng số hồ sơ", f"{summary['total_rows']:,}")
+            c2.metric("Cảnh báo Rút học phần", f"{summary['withdrawn_count']:,}", f"{summary['withdrawn_rate_pct']:.2f}%")
+            c3.metric("Không rút học phần", f"{summary['not_withdrawn_count']:,}")
 
-                    try:
-                        classes = list(pipe.named_steps["model"].classes_)
-                        w_idx = classes.index("Withdrawn")
-                        probs = pipe.predict_proba(X_unlabeled)[:, w_idx] * 100
-                        df_out["withdrawn_probability_%"] = probs.round(2)
-                    except Exception:
-                        df_out["withdrawn_probability_%"] = "N/A (SVM probability=False)"
-
-                    pred_prog.progress(85, text="⏳ [85%] Đang xuất kết quả ra file CSV...")
-                    out_filename = f"{source_name}__predicted_by__{model_id}.csv"
-                    out_path = os.path.join(config.PREDICTIONS_DIR, out_filename)
-                    df_out.to_csv(out_path, index=False, encoding="utf-8-sig")
-                    pred_prog.progress(100, text="✅ [100%] Dự đoán hoàn tất!")
-
-                    n_total = len(df_out)
-                    n_w = int((df_out["predicted_target"] == "Withdrawn").sum())
-                    n_nw = n_total - n_w
-
-                    st.success(f"✅ Đã gán nhãn xong {n_total} dòng và lưu tại: `{out_path}`")
-
-                    p1, p2, p3 = st.columns(3)
-                    p1.metric("Tổng số dòng dự đoán", f"{n_total:,}")
-                    p2.metric("Dự đoán bỏ học (Withdrawn)", f"{n_w:,} ca", f"{n_w/n_total*100:.2f}%")
-                    p3.metric("Dự đoán Không bỏ học (Not_withdrawn)", f"{n_nw:,} ca", f"{n_nw/n_total*100:.2f}%")
-
-                    st.markdown("#### 📋 Bảng dữ liệu sau khi đã gán nhãn dự đoán:")
-                    priority_cols = [
-                        c for c in ["code_module", "code_presentation", "id_student", "predicted_target", "withdrawn_probability_%"]
-                        if c in df_out.columns
-                    ]
-                    other_cols = [c for c in df_out.columns if c not in priority_cols]
-                    st.dataframe(df_out[priority_cols + other_cols], use_container_width=True)
-
-                    st.download_button(
-                        "📥 Tải file CSV đã có nhãn về máy",
-                        data=df_out.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-                        file_name=out_filename,
-                        mime="text/csv"
-                    )
-
-                    if auto_open:
-                        open_file_on_os(out_path)
-                        st.info(f"📂 Đã kích hoạt mở trực tiếp file `{out_path}` trên hệ điều hành!")
+            st.dataframe(df_res, use_container_width=True)
+            csv_bytes = df_res.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "💾 Tải xuống file kết quả dự đoán (.csv)",
+                data=csv_bytes,
+                file_name=f"predictions_{selected_model['stem']}.csv",
+                mime="text/csv"
+            )
 
 
 # =====================================================================
