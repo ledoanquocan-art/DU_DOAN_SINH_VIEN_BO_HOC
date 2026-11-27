@@ -29,7 +29,6 @@ DERIVED_WEEKLY_FEATURES = [
     "click_std_4w"
 ]
 
-
 def _extract_model_and_meta(loaded_obj, filename):
     """Tách pipeline mô hình và metadata từ file .joblib (hỗ trợ cả dạng dict lẫn Pipeline trực tiếp)."""
     if isinstance(loaded_obj, dict):
@@ -73,6 +72,7 @@ def list_saved_models():
     Quét toàn bộ file .joblib trong results/models/ và ghép thêm chỉ số đánh giá
     (Test Accuracy / Macro-F1 / Recall hoặc CV Macro-F1) để người dùng dễ chọn mô hình.
     """
+    
     if not os.path.exists(config.MODELS_DIR):
         return []
 
@@ -117,9 +117,16 @@ def list_saved_models():
             score_tag = "Chưa có chỉ số kiểm thử"
 
         records.append({
+            "model_id": stem,
+            "model_name": meta.get("model_name", stem),
+            "model_key": meta.get("model_key", ""),
+            "params": meta.get("params", {}),
+            "cv_macro_f1": cv_f1,
+            "cv_accuracy": meta.get("cv_accuracy"),
             "filename": fname,
             "stem": stem,
             "path": full_path,
+            "model_path": full_path,
             "display_name": display_name,
             "score_tag": score_tag,
             "label": f"{display_name}  ({score_tag})",

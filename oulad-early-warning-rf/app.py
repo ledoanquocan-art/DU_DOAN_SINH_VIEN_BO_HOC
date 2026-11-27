@@ -22,7 +22,7 @@ from src.pipeline_utils import (
     open_file_on_os
 )
 from src.evaluator import evaluate_model_with_progress
-from src.predictor import list_saved_models, predict_unlabeled_dataframe
+from src.predictor import list_saved_models as list_predictor_models, predict_unlabeled_dataframe
 
 warnings.filterwarnings("ignore")
 from src.data_audit import (
@@ -98,7 +98,7 @@ with st.sidebar:
             "3. Chạy mô hình (Kiểm thử & Biểu đồ)",
             "4. Đối chứng đa mô hình",
             "5. Dự đoán dữ liệu không nhãn",
-            "6. Tìm kiếm sinh viên (Tra cứu 39 cột)"
+            "6. Tìm kiếm sinh viên (Tra cứu 50 cột)"
         ]
     )
 
@@ -635,7 +635,7 @@ elif menu == "4. Đối chứng đa mô hình":
 # CHỨC NĂNG 5: DỰ ĐOÁN FILE DỮ LIỆU KHÔNG NHÃN & MỞ FILE
 # =====================================================================
 elif menu == "5. Dự đoán dữ liệu không nhãn":
-    models = list_saved_models()
+    models = list_predictor_models()
     if not models:
         st.warning("Chưa có mô hình nào trong results/models/. Hãy chạy Mục 2 trước.")
     else:
@@ -689,7 +689,7 @@ elif menu == "5. Dự đoán dữ liệu không nhãn":
 # =====================================================================
 # CHỨC NĂNG 6: TÌM KIẾM SINH VIÊN (TRA CỨU BỘ 39 THUỘC TÍNH)
 # =====================================================================
-elif menu == "6. Tìm kiếm sinh viên (Tra cứu 39 cột)":
+elif menu == "6. Tìm kiếm sinh viên (Tra cứu 50 cột)":
     st.subheader("🔍 6. Tra cứu Hồ sơ & 39 Thuộc tính của Sinh viên")
 
     if not os.path.exists(config.FEATURES_DATA_PATH):
